@@ -169,8 +169,9 @@ def main():
                 print '    HostName ' + ip_addr
             else:
 		if not ip_addr and args.private:
-                    print '    ProxyCommand ssh -i ' + keyname + ' -l ' + amis[instance.image_id] + ' ' + args.private + '  nc ' + private_ip_addr + '  22'
-                elif private_ip_addr:
+                    print '    ProxyCommand ssh -i ' + keyname + ' -l ' + amis[instance.image_id] + ' ' + args.private + '  nc %h %p'
+                    print '    Port 22'
+                if private_ip_addr:
                     print '    HostName ' + private_ip_addr
 
             try:

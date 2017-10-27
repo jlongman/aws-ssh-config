@@ -46,7 +46,7 @@ def generate_id(instance, tags_filter, region):
     if region:
         instance_id += '-' + instance.placement
 
-    return instance_id
+    return instance_id.lower()
 
 
 def main():
@@ -55,7 +55,8 @@ def main():
     parser.add_argument('--keydir', default='~/.ssh/', help='Location of private keys')
     parser.add_argument('--no-identities-only', action='store_true', help='Do not include IdentitiesOnly=yes in ssh config; may cause connection refused if using ssh-agent')
     parser.add_argument('--prefix', default='', help='Specify a prefix to prepend to all host names')
-    parser.add_argument('--private', action='store_true', help='Use private IP addresses (public are used by default)')
+    parser.add_argument('--private', default=None, help='Use private IP addresses (public are used by default)')
+    parser.add_argument('--match', default=None, help='Use private IP addresses (public are used by default)')
     parser.add_argument('--profile', help='Specify AWS credential profile to use')
     parser.add_argument('--region', action='store_true', help='Append the region name at the end of the concatenation')
     parser.add_argument('--ssh-key-name', default='', help='Override the ssh key to use')
@@ -63,6 +64,7 @@ def main():
     parser.add_argument('--tags', help='A comma-separated list of tag names to be considered for concatenation. If omitted, all tags will be used')
     parser.add_argument('--user', help='Override the ssh username for all hosts')
     parser.add_argument('--white-list-region', default='', help='Which regions must be included. If omitted, all regions are considered', nargs="+")
+    
 
     args = parser.parse_args()
 
@@ -129,19 +131,21 @@ def main():
 
     for k in sorted(instances):
         for instance in instances[k]:
-            if args.private:
-                if instance.private_ip_address:
-                    ip_addr = instance.private_ip_address
-            else:
+            if True:
+                if not instance.private_ip_address and not instance.ip_address:
+                    sys.stderr.write('Cannot lookup ip address for instance %s, skipped it.' % instance.id)
+                    continue
                 if instance.ip_address:
                     ip_addr = instance.ip_address
                 elif instance.private_ip_address:
-                    ip_addr = instance.private_ip_address
-                else:
-                    sys.stderr.write('Cannot lookup ip address for instance %s, skipped it.' % instance.id)
-                    continue
+                    ip_addr = None
+                    private_ip_addr = instance.private_ip_address
 
             instance_id = generate_id(instance, args.tags, args.region)
+            if args.match:
+                regexp = re.compile(args.match)
+                if not regexp.match(instance_id):
+                   continue # skip
 
             if counts_total[instance_id] != 1:
                 counts_incremental[instance_id] += 1
@@ -150,8 +154,24 @@ def main():
             hostid = args.prefix + instance_id
             hostid = hostid.replace(' ', '_') # get rid of spaces
 
+            if args.keydir:
+                keydir = args.keydir
+            else:
+                keydir = '~/.ssh/'
+
+            if args.ssh_key_name:
+                keyname = keydir + args.ssh_key_name + '.pem'
+            else:
+                keyname = keydir + instance.key_name.replace(' ', '_') + '.pem'
+
             print 'Host ' + hostid
-            print '    HostName ' + ip_addr
+            if ip_addr:
+                print '    HostName ' + ip_addr
+            else:
+		if not ip_addr and args.private:
+                    print '    ProxyCommand ssh -i ' + keyname + ' -l ' + amis[instance.image_id] + ' ' + args.private + '  nc ' + private_ip_addr + '  22'
+                elif private_ip_addr:
+                    print '    HostName ' + private_ip_addr
 
             try:
                 if amis[instance.image_id] is not None:
@@ -159,16 +179,7 @@ def main():
             except:
                 pass
 
-            if args.keydir:
-                keydir = args.keydir
-            else:
-                keydir = '~/.ssh/'
-
-            if args.ssh_key_name:
-                print '    IdentityFile ' + keydir + args.ssh_key_name + '.pem'
-            else:
-                print '    IdentityFile ' + keydir + instance.key_name.replace(' ', '_') + '.pem'
-
+            print '    IdentityFile ' + keyname
             if not args.no_identities_only:
                 # ensure ssh-agent keys don't flood when we know the right file to use
                 print '    IdentitiesOnly yes'
